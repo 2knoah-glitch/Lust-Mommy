@@ -1,6 +1,11 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
-const axios = require('axios');
 require('dotenv').config();
+
+// Import utility modules
+const errorHandler = require('./utils/errorHandler');
+const configValidator = require('./utils/configValidator');
+const rateLimiter = require('./utils/rateLimiter');
+const contentCache = require('./utils/contentCache');
 
 const client = new Client({
     intents: [
@@ -12,140 +17,129 @@ const client = new Client({
     ]
 });
 
-// Configuration from environment
+// Enhanced configuration
 const config = {
     token: process.env.DISCORD_TOKEN,
+    clientId: process.env.CLIENT_ID,
     highRoles: process.env.HIGH_ROLES?.split(',') || [],
     superAdmins: process.env.SUPER_ADMINS?.split(',') || [],
     nsfwChannels: process.env.NSFW_CHANNELS?.split(',') || [],
-    logChannel: process.env.LOG_CHANNEL
+    logChannel: process.env.LOG_CHANNEL,
+    botName: process.env.BOT_NAME || 'Lust Mommy'
 };
 
-// Content sources with multiple APIs
-const contentSources = {
-    loli: [
-        'https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&tags=loli&json=1',
-        'https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags=loli&json=1',
-        'https://yande.re/post.json?tags=loli',
-        'https://danbooru.donmai.us/posts.json?tags=loli'
-    ],
-    shotacon: [
-        'https://rule34.xxx/index.php?page=dapi&s=post&q=index&tags=shotacon&json=1',
-        'https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags=shotacon&json=1',
-        'https://yande.re/post.json?tags=shotacon'
-    ],
-    yaoi: [
-        'https://rule34.xxx/index.php?page=dapi&s=post&q=index&tags=yaoi&json=1',
-        'https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags=yaoi&json=1',
-        'https://yande.re/post.json?tags=yaoi'
-    ],
-    yuri: [
-        'https://rule34.xxx/index.php?page=dapi&s=post&q=index&tags=yuri&json=1',
-        'https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags=yuri&json=1',
-        'https://yande.re/post.json?tags=yuri'
-    ],
-    hentai: [
-        'https://rule34.xxx/index.php?page=dapi&s=post&q=index&tags=hentai&json=1',
-        'https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags=hentai&json=1',
-        'https://yande.re/post.json?tags=hentai'
-    ]
-};
-
-// Content fetching with fallback
-async function fetchContent(type) {
-    const sources = contentSources[type];
-    if (!sources) return null;
-    
-    for (const source of sources.sort(() => Math.random() - 0.5)) {
-        try {
-            const response = await axios.get(source, { timeout: 5000 });
-            if (response.data && response.data.length > 0) {
-                const post = response.data[Math.floor(Math.random() * response.data.length)];
-                return post.file_url || post.source || post.image;
-            }
-        } catch (error) {
-            continue;
-        }
-    }
-    return null;
+// Validate configuration on startup
+const configErrors = configValidator.validate(config);
+if (configErrors.length > 0) {
+    console.error('❌ Configuration errors:', configErrors);
+    process.exit(1);
 }
 
-// Permission checks
+// Permission checks with enhanced validation
 function hasHighRole(member) {
-    return member.roles.cache.some(role => config.highRoles.includes(role.id));
+    return config.highRoles.some(roleId => configValidator.validateId(roleId, 'role') && 
+        member.roles.cache.has(roleId));
 }
 
 function isSuperAdmin(userId) {
-    return config.superAdmins.includes(userId);
+    return config.superAdmins.some(adminId => configValidator.validateId(adminId, 'user') && 
+        adminId === userId);
 }
 
 function isNSFWChannel(channelId) {
-    return config.nsfwChannels.includes(channelId);
+    return config.nsfwChannels.some(channel => configValidator.validateId(channel, 'channel') && 
+        channel === channelId);
 }
 
-// Welcome message
-client.on('guildCreate', (guild) => {
-    const channel = guild.systemChannel || guild.channels.cache.find(ch => ch.type === 0);
-    if (!channel) return;
-    
-    const embed = new EmbedBuilder()
-        .setColor(0xFF00FF)
-        .setTitle("🏠 Lust Mommy has arrived!")
-        .setDescription("aww who's mommy's good map or who's mommy's good aam😈")
-        .addFields(
-            { name: 'Moderation Commands', value: '`/kick`, `/ban`, `/masskick`, `/massban`' },
-            { name: 'NSFW Commands', value: '`/loli`, `/shotacon`, `/yaoi`, `/yuri`, `/hentai`' },
-            { name: 'Utility Commands', value: '`/serverinfo`, `/userinfo`, `/ping`' }
-        )
-        .setTimestamp();
-    
-    channel.send({ embeds: [embed] });
+// Enhanced welcome message
+client.on('guildCreate', async (guild) => {
+    try {
+        const channel = guild.systemChannel || 
+            guild.channels.cache.find(ch => ch.type === 0 && ch.permissionsFor(guild.members.me).has('SendMessages'));
+        
+        if (!channel) return;
+
+        const embed = new EmbedBuilder()
+            .setColor(0xFF00FF)
+            .setTitle(`🏠 ${config.botName} has arrived!`)
+            .setDescription("aww who's mommy's good map or who's mommy's good aam😈")
+            .addFields(
+                { name: '🔧 Moderation', value: '`/kick`, `/ban`, `/masskick`, `/massban`' },
+                { name: '🎨 NSFW Content', value: '`/loli`, `/shotacon`, `/yaoi`, `/yuri`, `/hentai`' },
+                { name: 'ℹ️ Utility', value: '`/serverinfo`, `/userinfo`, `/ping`, `/help`' }
+            )
+            .setFooter({ text: `Bot ID: ${client.user.id}` })
+            .setTimestamp();
+
+        await channel.send({ embeds: [embed] });
+    } catch (error) {
+        errorHandler.log(error, 'Guild Create');
+    }
 });
 
-// Command handling
+// Enhanced command handling with rate limiting and error handling
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
+    const { commandName, user, member } = interaction;
+
     try {
-        switch (interaction.commandName) {
+        // Rate limiting check
+        if (!rateLimiter.checkRateLimit(user.id, commandName)) {
+            return interaction.reply({ 
+                content: '⏳ Command rate limited. Try again later.', 
+                ephemeral: true 
+            });
+        }
+
+        // Cooldown check for NSFW commands
+        const cooldown = rateLimiter.checkCooldown(user.id, commandName);
+        if (cooldown) {
+            return interaction.reply({ 
+                content: `⏰ Command on cooldown. Wait ${cooldown} seconds.`, 
+                ephemeral: true 
+            });
+        }
+
+        switch (commandName) {
             case 'kick':
-                if (!hasHighRole(interaction.member)) {
-                    return interaction.reply({ content: '❌ Insufficient permissions', ephemeral: true });
+                if (!hasHighRole(member)) {
+                    return interaction.reply({ content: '❌ High role required', ephemeral: true });
                 }
                 const kickUser = interaction.options.getUser('user');
                 await interaction.guild.members.kick(kickUser);
-                interaction.reply(`✅ Kicked ${kickUser.tag}`);
+                await interaction.reply(`✅ Kicked ${kickUser.tag}`);
                 break;
 
             case 'ban':
-                if (!hasHighRole(interaction.member)) {
-                    return interaction.reply({ content: '❌ Insufficient permissions', ephemeral: true });
+                if (!hasHighRole(member)) {
+                    return interaction.reply({ content: '❌ High role required', ephemeral: true });
                 }
                 const banUser = interaction.options.getUser('user');
                 await interaction.guild.members.ban(banUser);
-                interaction.reply(`✅ Banned ${banUser.tag}`);
+                await interaction.reply(`✅ Banned ${banUser.tag}`);
                 break;
 
             case 'masskick':
-                if (!isSuperAdmin(interaction.user.id)) {
+                if (!isSuperAdmin(user.id)) {
                     return interaction.reply({ content: '❌ Super admin only', ephemeral: true });
                 }
                 const massKickRole = interaction.options.getRole('role');
                 const members = await interaction.guild.members.fetch();
                 const toKick = members.filter(m => m.roles.cache.has(massKickRole.id));
-                toKick.forEach(m => m.kick());
-                interaction.reply(`✅ Kicked ${toKick.size} members`);
+                toKick.forEach(m => m.kick().catch(() => {}));
+                await interaction.reply(`✅ Kicked ${toKick.size} members`);
                 break;
 
             case 'massban':
-                if (!isSuperAdmin(interaction.user.id)) {
+                if (!isSuperAdmin(user.id)) {
                     return interaction.reply({ content: '❌ Super admin only', ephemeral: true });
                 }
                 const ids = interaction.options.getString('ids').split(',').map(id => id.trim());
-                for (const id of ids) {
-                    await interaction.guild.members.ban(id);
+                for (const id of ids.slice(0, 25)) { // Limit to 25
+                    await interaction.guild.members.ban(id).catch(() => {});
                 }
-                interaction.reply(`✅ Banned ${ids.length} users`);
+                await interaction.reply(`✅ Banned ${ids.length} users`);
                 break;
 
             case 'loli':
@@ -154,39 +148,58 @@ client.on('interactionCreate', async (interaction) => {
             case 'yuri':
             case 'hentai':
                 if (!isNSFWChannel(interaction.channel.id)) {
-                    return interaction.reply({ content: '❌ NSFW commands only in NSFW channels', ephemeral: true });
+                    return interaction.reply({ content: '❌ NSFW channels only', ephemeral: true });
                 }
-                const content = await fetchContent(interaction.commandName);
+                // Set cooldown for NSFW commands
+                rateLimiter.setCooldown(user.id, commandName, 10000); // 10 second cooldown
+                
+                const content = await contentCache.getContent(commandName);
                 if (content) {
-                    interaction.reply(content);
+                    await interaction.reply(content);
                 } else {
-                    interaction.reply('❌ Failed to fetch content');
+                    await interaction.reply('❌ Content unavailable');
                 }
                 break;
 
             case 'ping':
-                interaction.reply('🏓 Pong!');
+                await interaction.reply('🏓 Pong!');
                 break;
 
             case 'serverinfo':
-                const embed = new EmbedBuilder()
-                    .setTitle('Server Info')
+                const serverEmbed = new EmbedBuilder()
+                    .setTitle('Server Information')
                     .addFields(
                         { name: 'Members', value: interaction.guild.memberCount.toString(), inline: true },
                         { name: 'Channels', value: interaction.guild.channels.cache.size.toString(), inline: true },
-                        { name: 'Created', value: interaction.guild.createdAt.toDateString(), inline: true }
+                        { name: 'Roles', value: interaction.guild.roles.cache.size.toString(), inline: true }
                     );
-                interaction.reply({ embeds: [embed] });
+                await interaction.reply({ embeds: [serverEmbed] });
+                break;
+
+            case 'help':
+                const helpEmbed = new EmbedBuilder()
+                    .setTitle(`${config.botName} Help`)
+                    .setDescription('All available commands')
+                    .addFields(
+                        { name: 'Moderation', value: '`/kick`, `/ban`, `/masskick`, `/massban`' },
+                        { name: 'NSFW', value: '`/loli`, `/shotacon`, `/yaoi`, `/yuri`, `/hentai`' },
+                        { name: 'Utility', value: '`/ping`, `/serverinfo`, `/userinfo`, `/help`' }
+                    );
+                await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
                 break;
         }
     } catch (error) {
-        interaction.reply('❌ Command failed');
+        errorHandler.handleInteractionError(error, interaction);
     }
 });
 
 client.once('ready', () => {
-    console.log(`✅ ${client.user.tag} is online!`);
+    console.log(`✅ ${config.botName} is online!`);
     client.user.setActivity('mommy\'s commands', { type: ActivityType.Watching });
 });
+
+// Error handling
+client.on('error', errorHandler.log);
+process.on('unhandledRejection', errorHandler.log);
 
 client.login(config.token);
