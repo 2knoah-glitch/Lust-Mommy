@@ -1,19 +1,23 @@
 {
   "name": "lust-mommy-bot",
-  "version": "1.1.0",
-  "description": "NSFW Discord bot with moderation",
+  "version": "2.0.0",
+  "description": "Advanced NSFW Discord bot with moderation",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "deploy": "node deploy-commands.js",
     "dev": "nodemon index.js",
-    "test": "node utils/configValidator.js"
+    "test": "node utils/configValidator.js",
+    "backup": "node utils/backupConfig.js",
+    "health": "node -e \"console.log(require('./utils/healthMonitor.js').getMetrics())\""
   },
   "dependencies": {
     "discord.js": "^14.14.1",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
     "node-cache": "^5.1.2",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "sqlite3": "^5.1.6",
+    "crypto": "^1.0.1"
   }
 }
